@@ -27,6 +27,10 @@ public class Order {
     @Column(name = "customer_id")
     private Long customerId;
 
+    @ManyToOne
+    @JoinColumn(name = "coffee_shop_id", nullable = false)
+    private CoffeeShop coffeeShop;
+
     @Column(name = "coffee_type")
     private String coffeeType;
 

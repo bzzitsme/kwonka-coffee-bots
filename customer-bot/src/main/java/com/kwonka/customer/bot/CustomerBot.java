@@ -1,6 +1,8 @@
 package com.kwonka.customer.bot;
 
+import com.kwonka.common.entity.CoffeeShop;
 import com.kwonka.common.entity.Order;
+import com.kwonka.common.service.CoffeeShopService;
 import com.kwonka.common.service.OrderService;
 import lombok.extern.slf4j.Slf4j;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
@@ -19,15 +21,32 @@ public class CustomerBot extends TelegramLongPollingBot {
 
     private final String botUsername;
     private final OrderService orderService;
+    private final CoffeeShopService coffeeShopService;
 
     private final Map<Long, Map<String, String>> userSelections = new HashMap<>();
     private final Map<Long, UserState> userStates = new HashMap<>();
     private final Map<Long, String> userOrderNumbers = new HashMap<>();
 
-    public CustomerBot(String botToken, String botUsername, OrderService orderService) {
+    private enum UserState {
+        START,
+        INTRO,
+        SELECTING_COFFEE_SHOP,
+        SELECTING_COFFEE,
+        SELECTING_SIZE,
+        SELECTING_ADDONS,
+        SELECTING_MILK,
+        SELECTING_SYRUP,
+        CONFIRMING_ORDER,
+        PAYMENT_INIT,
+        PAYMENT_CONFIRM,
+        ORDER_COMPLETED
+    }
+
+    public CustomerBot(String botToken, String botUsername, OrderService orderService, CoffeeShopService coffeeShopService) {
         super(botToken);
         this.botUsername = botUsername;
         this.orderService = orderService;
+        this.coffeeShopService = coffeeShopService;
     }
 
     @Override
@@ -51,8 +70,8 @@ public class CustomerBot extends TelegramLongPollingBot {
             } else if (messageText.equals("Новый заказ")) {
                 // Clear previous selections and start ordering process
                 clearUserSelections(chatId);
-                userStates.put(chatId, UserState.SELECTING_COFFEE);
-                sendCoffeeSelectionPage(chatId);
+                userStates.put(chatId, UserState.SELECTING_COFFEE_SHOP);
+                sendCoffeeShopSelectionPage(chatId);
             } else {
                 // Get current state and handle accordingly
                 UserState currentState = userStates.getOrDefault(chatId, UserState.START);
@@ -69,11 +88,15 @@ public class CustomerBot extends TelegramLongPollingBot {
 
                     case INTRO:
                         if (messageText.equals("Хочу кофе")) {
-                            userStates.put(chatId, UserState.SELECTING_COFFEE);
-                            sendCoffeeSelectionPage(chatId);
+                            userStates.put(chatId, UserState.SELECTING_COFFEE_SHOP);
+                            sendCoffeeShopSelectionPage(chatId);
                         } else {
                             handleUnknownCommand(chatId);
                         }
+                        break;
+
+                    case SELECTING_COFFEE_SHOP:
+                        handleCoffeeShopSelection(chatId, messageText);
                         break;
 
                     case SELECTING_COFFEE:
@@ -161,12 +184,24 @@ public class CustomerBot extends TelegramLongPollingBot {
             String syrupType = getUserSelection(chatId, "syrupType");
             BigDecimal totalPrice = new BigDecimal(calculateTotalPrice(chatId));
 
+            // Get the selected coffee shop
+            String coffeeShopIdStr = getUserSelection(chatId, "coffeeShopId");
+            if (coffeeShopIdStr == null) {
+                log.error("No coffee shop selected for chatId: {}", chatId);
+                return;
+            }
+
+            Long coffeeShopId = Long.parseLong(coffeeShopIdStr);
+            CoffeeShop coffeeShop = coffeeShopService.findById(coffeeShopId)
+                    .orElseThrow(() -> new RuntimeException("Coffee shop not found: " + coffeeShopId));
+
             // Use chatId as customer ID for now
             Long customerId = chatId;
 
             // Create the order using OrderService
             Order order = orderService.createOrder(
                     customerId,
+                    coffeeShop,
                     coffeeType,
                     size,
                     milkType,
@@ -228,6 +263,32 @@ public class CustomerBot extends TelegramLongPollingBot {
                 "Ванильный", "Ореховый", "Карамельный"
         );
         return validSyrupTypes.contains(messageText);
+    }
+
+    private void handleCoffeeShopSelection(long chatId, String messageText) {
+        // Find the coffee shop by name - exact match
+        Optional<CoffeeShop> coffeeShopOpt = coffeeShopService.getAllActiveShops().stream()
+                .filter(shop -> shop.getName().equals(messageText))
+                .findFirst();
+
+        if (coffeeShopOpt.isPresent()) {
+            // Save the selected coffee shop ID
+            saveUserSelection(chatId, "coffeeShopId", String.valueOf(coffeeShopOpt.get().getId()));
+
+            // Move to the next step
+            userStates.put(chatId, UserState.SELECTING_COFFEE);
+            sendCoffeeSelectionPage(chatId);
+        } else {
+            SendMessage message = new SendMessage();
+            message.setChatId(chatId);
+            message.setText("Пожалуйста, выберите кофейню из списка.");
+
+            try {
+                execute(message);
+            } catch (TelegramApiException e) {
+                log.error("Error sending invalid coffee shop message to chatId: {}", chatId, e);
+            }
+        }
     }
 
     private void handleAddonsSelection(long chatId, String messageText) {
@@ -596,6 +657,40 @@ public class CustomerBot extends TelegramLongPollingBot {
         }
     }
 
+    private void sendCoffeeShopSelectionPage(long chatId) {
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setText("Где тебе будет удобно забрать кофе?");
+
+        // Create keyboard with coffee shop options
+        ReplyKeyboardMarkup keyboardMarkup = new ReplyKeyboardMarkup();
+        keyboardMarkup.setResizeKeyboard(true);
+        keyboardMarkup.setOneTimeKeyboard(false);
+        keyboardMarkup.setSelective(true);
+
+        List<KeyboardRow> keyboard = new ArrayList<>();
+
+        // Fetch active coffee shops from the database
+        List<CoffeeShop> coffeeShops = coffeeShopService.getAllActiveShops();
+
+        for (CoffeeShop shop : coffeeShops) {
+            KeyboardRow row = new KeyboardRow();
+            // Remove the icon prefix
+            row.add(new KeyboardButton(shop.getName()));
+            keyboard.add(row);
+        }
+
+        keyboardMarkup.setKeyboard(keyboard);
+        message.setReplyMarkup(keyboardMarkup);
+
+        try {
+            execute(message);
+            log.debug("Coffee shop selection page sent to chatId: {}", chatId);
+        } catch (TelegramApiException e) {
+            log.error("Error sending coffee shop selection page to chatId: {}", chatId, e);
+        }
+    }
+
     private void sendCoffeeSelectionPage(long chatId) {
         SendMessage message = new SendMessage();
         message.setChatId(chatId);
@@ -841,20 +936,5 @@ public class CustomerBot extends TelegramLongPollingBot {
         } catch (TelegramApiException e) {
             log.error("Error sending unknown command message to chatId: {}", chatId, e);
         }
-    }
-
-    // Enum to track user state in the conversation
-    private enum UserState {
-        START,
-        INTRO,
-        SELECTING_COFFEE,
-        SELECTING_SIZE,
-        SELECTING_ADDONS,
-        SELECTING_MILK,
-        SELECTING_SYRUP,
-        CONFIRMING_ORDER,
-        PAYMENT_INIT,
-        PAYMENT_CONFIRM,
-        ORDER_COMPLETED
     }
 }

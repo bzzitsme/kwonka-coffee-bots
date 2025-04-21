@@ -1,5 +1,6 @@
 package com.kwonka.common.service;
 
+import com.kwonka.common.entity.CoffeeShop;
 import com.kwonka.common.entity.Order;
 import com.kwonka.common.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +21,7 @@ public class OrderService {
      * Creates a new order with PENDING status
      */
     @Transactional
-    public Order createOrder(Long customerId, String coffeeType, String size,
+    public Order createOrder(Long customerId, CoffeeShop coffeeShop, String coffeeType, String size,
                              String milkType, String syrupType, BigDecimal totalPrice) {
 
         String orderNumber = generateOrderNumber();
@@ -28,6 +29,7 @@ public class OrderService {
         Order order = Order.builder()
                 .orderNumber(orderNumber)
                 .customerId(customerId)
+                .coffeeShop(coffeeShop)
                 .coffeeType(coffeeType)
                 .size(size)
                 .milkType(milkType)
@@ -83,5 +85,12 @@ public class OrderService {
      */
     public List<Order> getOrdersByStatus(Order.OrderStatus status) {
         return orderRepository.findByStatus(status);
+    }
+
+    /**
+     * Gets all orders for a specific coffee shop with a specific status
+     */
+    public List<Order> getOrdersByShopAndStatus(CoffeeShop coffeeShop, Order.OrderStatus status) {
+        return orderRepository.findByCoffeeShopAndStatus(coffeeShop, status);
     }
 }
