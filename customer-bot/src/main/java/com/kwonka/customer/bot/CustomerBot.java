@@ -1,5 +1,7 @@
 package com.kwonka.customer.bot;
 
+import com.kwonka.common.entity.Order;
+import com.kwonka.common.service.OrderService;
 import lombok.extern.slf4j.Slf4j;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
@@ -9,20 +11,23 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.Keyboard
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
+import java.math.BigDecimal;
 import java.util.*;
 
 @Slf4j
 public class CustomerBot extends TelegramLongPollingBot {
 
     private final String botUsername;
+    private final OrderService orderService;
 
     private final Map<Long, Map<String, String>> userSelections = new HashMap<>();
-
     private final Map<Long, UserState> userStates = new HashMap<>();
+    private final Map<Long, String> userOrderNumbers = new HashMap<>();
 
-    public CustomerBot(String botToken, String botUsername) {
+    public CustomerBot(String botToken, String botUsername, OrderService orderService) {
         super(botToken);
         this.botUsername = botUsername;
+        this.orderService = orderService;
     }
 
     @Override
@@ -130,7 +135,8 @@ public class CustomerBot extends TelegramLongPollingBot {
 
                     case PAYMENT_CONFIRM:
                         if (messageText.equals("Я оплатил(а)")) {
-                            // Payment successful (mock)
+                            // Payment successful - create order in database
+                            createOrderInDatabase(chatId);
                             userStates.put(chatId, UserState.ORDER_COMPLETED);
                             sendOrderSuccessMessage(chatId);
                         } else {
@@ -144,6 +150,35 @@ public class CustomerBot extends TelegramLongPollingBot {
                         break;
                 }
             }
+        }
+    }
+
+    private void createOrderInDatabase(long chatId) {
+        try {
+            String coffeeType = getUserSelection(chatId, "coffeeType");
+            String size = getSizeLabel(getUserSelection(chatId, "size"));
+            String milkType = getUserSelection(chatId, "milkType");
+            String syrupType = getUserSelection(chatId, "syrupType");
+            BigDecimal totalPrice = new BigDecimal(calculateTotalPrice(chatId));
+
+            // Use chatId as customer ID for now
+            Long customerId = chatId;
+
+            // Create the order using OrderService
+            Order order = orderService.createOrder(
+                    customerId,
+                    coffeeType,
+                    size,
+                    milkType,
+                    syrupType,
+                    totalPrice);
+
+            // Store the order number for reference
+            userOrderNumbers.put(chatId, order.getOrderNumber());
+
+            log.info("Created order in database: {}", order);
+        } catch (Exception e) {
+            log.error("Error creating order in database for chatId: {}", chatId, e);
         }
     }
 
@@ -345,9 +380,18 @@ public class CustomerBot extends TelegramLongPollingBot {
     }
 
     private void sendOrderSuccessMessage(long chatId) {
+        String orderNumber = userOrderNumbers.get(chatId);
+        String messageText = "Заказ принят в работу! Мы уведомим вас, когда он будет готов.";
+
+        if (orderNumber != null) {
+            messageText += "\nНомер вашего заказа: " + orderNumber;
+        }
+
+        messageText += "\nСпасибо, что выбрали One Shott Coffee! ☕️";
+
         SendMessage message = new SendMessage();
         message.setChatId(chatId);
-        message.setText("Заказ принят в работу! Мы уведомим вас, когда он будет готов. Спасибо, что выбрали One Shott Coffee! ☕️");
+        message.setText(messageText);
 
         // Create keyboard to restart
         ReplyKeyboardMarkup keyboardMarkup = new ReplyKeyboardMarkup();
@@ -501,13 +545,7 @@ public class CustomerBot extends TelegramLongPollingBot {
         SendMessage message = new SendMessage();
         message.setChatId(chatId);
         message.setText("Добро пожаловать в One Shott Coffee! ☕️\n" +
-                "Здесь можно заказать кофе напрямую - прямо в Telegram!\n" +
-                "Нажми «Старт» внизу 👇\n" +
-                "1. Выбери кофейню 📍\n" +
-                "2. Собери заказ 📝\n" +
-                "3. Мы сразу примем его в работу и дадим знать, когда всё будет готово 🔔\n" +
-                "Спасибо, что выбираешь нас.\n" +
-                "С заботой, Kwonka | 2025");
+                "Нажми «Старт» внизу 👇");
 
         // Create keyboard with Start button
         ReplyKeyboardMarkup keyboardMarkup = new ReplyKeyboardMarkup();

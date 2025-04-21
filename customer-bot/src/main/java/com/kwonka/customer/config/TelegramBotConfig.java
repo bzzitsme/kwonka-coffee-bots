@@ -1,7 +1,9 @@
 package com.kwonka.customer.config;
 
+import com.kwonka.common.service.OrderService;
 import com.kwonka.customer.bot.CustomerBot;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,9 +21,12 @@ public class TelegramBotConfig {
     @Value("${telegram.bot.token}")
     private String botToken;
 
+    @Autowired
+    private OrderService orderService;
+
     @Bean
     public CustomerBot oneShotCoffeeBot() {
-        return new CustomerBot(botToken, botUsername);
+        return new CustomerBot(botToken, botUsername, orderService);
     }
 
     @Bean
