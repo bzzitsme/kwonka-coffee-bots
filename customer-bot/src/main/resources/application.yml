@@ -1,4 +1,6 @@
 spring:
+  main:
+    allow-bean-definition-overriding: true
   datasource:
     url: jdbc:postgresql://localhost:5432/kwonka
     username: kwonka
@@ -19,7 +21,10 @@ spring:
 telegram:
   bot:
     username: CustomerKwonkaBot
-    token: ${TELEGRAM_BOT_TOKEN:token}
+    token: ${TELEGRAM_CUSTOMER_TOKEN:token}
+  customer:
+    bot:
+      token: ${TELEGRAM_BARISTA_TOKEN:token}
 
 logging:
   level:

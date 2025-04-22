@@ -20,6 +20,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     List<Order> findByCoffeeShopAndStatus(CoffeeShop coffeeShop, Order.OrderStatus status);
 
+    List<Order> findByCustomerIdAndStatus(Long customerId, Order.OrderStatus status);
+
     List<Order> findByCoffeeShop(CoffeeShop coffeeShop);
 
     @Query("SELECT MAX(CAST(o.orderNumber AS int)) FROM Order o")

@@ -7,7 +7,7 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 @SpringBootApplication
-@ComponentScan(basePackages = {"com.kwonka.customer", "com.kwonka.common"})
+@ComponentScan(basePackages = {"com.kwonka.customer", "com.kwonka.common.service"})
 @EntityScan("com.kwonka.common.entity")
 @EnableJpaRepositories("com.kwonka.common.repository")
 public class CustomerBotApplication {

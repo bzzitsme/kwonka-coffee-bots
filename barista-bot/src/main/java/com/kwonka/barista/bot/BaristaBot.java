@@ -3,6 +3,7 @@ package com.kwonka.barista.bot;
 import com.kwonka.common.entity.CoffeeShop;
 import com.kwonka.common.entity.Order;
 import com.kwonka.common.service.CoffeeShopService;
+import com.kwonka.common.service.CustomerNotificationService;
 import com.kwonka.common.service.OrderService;
 import lombok.extern.slf4j.Slf4j;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
@@ -25,6 +26,7 @@ public class BaristaBot extends TelegramLongPollingBot {
     private final String botUsername;
     private final OrderService orderService;
     private final CoffeeShopService coffeeShopService;
+    private final CustomerNotificationService customerNotificationService;
 
     private final Map<Long, BaristaState> baristaStates = new HashMap<>();
     private final Map<Long, String> baristaLocations = new HashMap<>();
@@ -36,11 +38,14 @@ public class BaristaBot extends TelegramLongPollingBot {
         ORDER_DETAILS
     }
 
-    public BaristaBot(String botToken, String botUsername, OrderService orderService, CoffeeShopService coffeeShopService) {
+    public BaristaBot(String botToken, String botUsername, OrderService orderService,
+                      CoffeeShopService coffeeShopService,
+                      CustomerNotificationService customerNotificationService) {
         super(botToken);
         this.botUsername = botUsername;
         this.orderService = orderService;
         this.coffeeShopService = coffeeShopService;
+        this.customerNotificationService = customerNotificationService;
     }
 
     @Override
@@ -94,15 +99,14 @@ public class BaristaBot extends TelegramLongPollingBot {
                     break;
 
                 case VIEWING_ORDERS:
-                    if (messageText.equals("Обновить заказы")) {
-                        sendPendingOrders(chatId);
-                    } else if (messageText.equals("Сменить локацию")) {
-                        baristaStates.put(chatId, BaristaState.LOCATION_SELECTION);
-                        sendLocationSelectionMessage(chatId);
-                    } else if (messageText.equals("Заказы в работе")) {
-                        sendInProgressOrders(chatId);
-                    } else {
-                        sendUnknownCommandMessage(chatId);
+                    switch (messageText) {
+                        case "Обновить заказы" -> sendPendingOrders(chatId);
+                        case "Сменить локацию" -> {
+                            baristaStates.put(chatId, BaristaState.LOCATION_SELECTION);
+                            sendLocationSelectionMessage(chatId);
+                        }
+                        case "Заказы в работе" -> sendInProgressOrders(chatId);
+                        default -> sendUnknownCommandMessage(chatId);
                     }
                     break;
 
@@ -169,7 +173,6 @@ public class BaristaBot extends TelegramLongPollingBot {
 
         List<KeyboardRow> keyboard = new ArrayList<>();
 
-        // Fetch coffee shops from the database
         List<CoffeeShop> coffeeShops = coffeeShopService.getAllActiveShops();
 
         for (CoffeeShop shop : coffeeShops) {
@@ -198,6 +201,7 @@ public class BaristaBot extends TelegramLongPollingBot {
         try {
             execute(message);
             log.debug("Location confirmation sent to barista chatId: {}", chatId);
+            baristaStates.put(chatId, BaristaState.VIEWING_ORDERS);
         } catch (TelegramApiException e) {
             log.error("Error sending location confirmation to barista chatId: {}", chatId, e);
         }
@@ -393,6 +397,10 @@ public class BaristaBot extends TelegramLongPollingBot {
         message.setChatId(chatId);
         message.setText("На данный момент нет " + orderType + " заказов. Ожидайте новых заказов.");
 
+        // Add the orders menu keyboard to allow refresh and other options
+        ReplyKeyboardMarkup keyboardMarkup = getOrdersMenuKeyboard();
+        message.setReplyMarkup(keyboardMarkup);
+
         try {
             execute(message);
             log.debug("No orders message sent to barista chatId: {}", chatId);
@@ -532,8 +540,8 @@ public class BaristaBot extends TelegramLongPollingBot {
             execute(message);
             log.info("Barista {} marked order {} as ready", chatId, orderNumber);
 
-            // Here you would notify the customer that their order is ready
-            // notifyCustomerOrderReady(updatedOrder);
+            // Notify the customer that their order is ready
+            notifyCustomerOrderReady(updatedOrder);
 
             // Refresh the in-progress orders list
             sendInProgressOrders(chatId);
@@ -606,5 +614,18 @@ public class BaristaBot extends TelegramLongPollingBot {
             default:
                 return "❓";
         }
+    }
+
+    private void notifyCustomerOrderReady(Order order) {
+        // Get customer Telegram chat ID from the order's customerId
+        Long customerChatId = order.getCustomerId();
+        if (customerChatId == null) {
+            log.error("Cannot notify customer: no customer ID found for order {}", order.getOrderNumber());
+            return;
+        }
+
+        // Use the notification service to send message to customer
+        customerNotificationService.notifyOrderReady(customerChatId, order.getOrderNumber());
+        log.info("Customer {} notified about ready order {}", customerChatId, order.getOrderNumber());
     }
 }

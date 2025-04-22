@@ -93,4 +93,11 @@ public class OrderService {
     public List<Order> getOrdersByShopAndStatus(CoffeeShop coffeeShop, Order.OrderStatus status) {
         return orderRepository.findByCoffeeShopAndStatus(coffeeShop, status);
     }
+
+    /**
+     * Gets all orders for a specific customer with a specific status
+     */
+    public List<Order> getOrdersByCustomerIdAndStatus(Long customerId, Order.OrderStatus status) {
+        return orderRepository.findByCustomerIdAndStatus(customerId, status);
+    }
 }

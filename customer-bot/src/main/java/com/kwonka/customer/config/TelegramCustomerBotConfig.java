@@ -1,8 +1,9 @@
-package com.kwonka.barista.config;
+package com.kwonka.customer.config;
 
-import com.kwonka.barista.bot.BaristaBot;
 import com.kwonka.common.service.CoffeeShopService;
+import com.kwonka.common.service.CustomerNotificationService;
 import com.kwonka.common.service.OrderService;
+import com.kwonka.customer.bot.CustomerBot;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,13 +15,16 @@ import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 
 @Configuration
 @Slf4j
-public class TelegramBotConfig {
+public class TelegramCustomerBotConfig {
 
-    @Value("${telegram.bot.barista.username}")
+    @Value("${telegram.bot.username}")
     private String botUsername;
 
-    @Value("${telegram.bot.barista.token}")
+    @Value("${telegram.bot.token}")
     private String botToken;
+
+    @Value("${telegram.customer.bot.token}")
+    private String customerBotToken;
 
     @Autowired
     private OrderService orderService;
@@ -28,24 +32,29 @@ public class TelegramBotConfig {
     @Autowired
     private CoffeeShopService coffeeShopService;
 
-    @Bean
-    public BaristaBot baristaBot() {
-        return new BaristaBot(botToken, botUsername, orderService, coffeeShopService);
+    @Bean(name = "baristaCustomerNotificationService")
+    public CustomerNotificationService customerNotificationService() {
+        return new CustomerNotificationService(customerBotToken);
     }
 
     @Bean
-    public TelegramBotsApi telegramBotsApi(BaristaBot baristaBot) throws TelegramApiException {
+    public CustomerBot oneShotCoffeeBot(CustomerNotificationService customerNotificationService) {
+        return new CustomerBot(botToken, botUsername, orderService, coffeeShopService, customerNotificationService);
+    }
+
+    @Bean
+    public TelegramBotsApi telegramBotsApi(CustomerBot customerBot) throws TelegramApiException {
         try {
             TelegramBotsApi api = new TelegramBotsApi(DefaultBotSession.class);
-            api.registerBot(baristaBot);
-            log.info("Barista Telegram bot {} registered successfully", botUsername);
+            api.registerBot(customerBot);
+            log.info("Telegram bot {} registered successfully", botUsername);
             return api;
         } catch (TelegramApiException e) {
             if (e.getMessage().contains("Error removing old webhook")) {
                 log.warn("Could not remove old webhook. This can happen when running for the first time. Continuing...");
                 // Try again with a different approach
                 TelegramBotsApi api = new TelegramBotsApi(DefaultBotSession.class);
-                api.registerBot(baristaBot);
+                api.registerBot(customerBot);
                 return api;
             }
             throw e;

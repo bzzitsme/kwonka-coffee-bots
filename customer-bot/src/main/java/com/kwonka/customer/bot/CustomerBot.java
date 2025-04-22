@@ -3,6 +3,7 @@ package com.kwonka.customer.bot;
 import com.kwonka.common.entity.CoffeeShop;
 import com.kwonka.common.entity.Order;
 import com.kwonka.common.service.CoffeeShopService;
+import com.kwonka.common.service.CustomerNotificationService;
 import com.kwonka.common.service.OrderService;
 import lombok.extern.slf4j.Slf4j;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
@@ -22,6 +23,7 @@ public class CustomerBot extends TelegramLongPollingBot {
     private final String botUsername;
     private final OrderService orderService;
     private final CoffeeShopService coffeeShopService;
+    private final CustomerNotificationService customerNotificationService;
 
     private final Map<Long, Map<String, String>> userSelections = new HashMap<>();
     private final Map<Long, UserState> userStates = new HashMap<>();
@@ -42,11 +44,12 @@ public class CustomerBot extends TelegramLongPollingBot {
         ORDER_COMPLETED
     }
 
-    public CustomerBot(String botToken, String botUsername, OrderService orderService, CoffeeShopService coffeeShopService) {
+    public CustomerBot(String botToken, String botUsername, OrderService orderService, CoffeeShopService coffeeShopService, CustomerNotificationService customerNotificationService) {
         super(botToken);
         this.botUsername = botUsername;
         this.orderService = orderService;
         this.coffeeShopService = coffeeShopService;
+        this.customerNotificationService = customerNotificationService;
     }
 
     @Override
@@ -62,12 +65,54 @@ public class CustomerBot extends TelegramLongPollingBot {
 
             log.debug("Received message: '{}' from chatId: {}", messageText, chatId);
 
+            // Check for the "I've picked it up" message (step 11 -> 12 transition)
+            if (messageText.equals("Я забрал(а)")) {
+                // Find the latest ready order for this customer
+                List<Order> readyOrders = orderService.getOrdersByCustomerIdAndStatus(chatId, Order.OrderStatus.READY);
+
+                if (!readyOrders.isEmpty()) {
+                    // Sort by creation date (newest first)
+                    readyOrders.sort((o1, o2) -> o2.getCreatedAt().compareTo(o1.getCreatedAt()));
+
+                    // Mark the most recent ready order as completed
+                    Order latestOrder = readyOrders.get(0);
+                    try {
+                        orderService.updateOrderStatus(latestOrder.getOrderNumber(), Order.OrderStatus.COMPLETED);
+                        log.info("Order {} marked as completed by customer {}", latestOrder.getOrderNumber(), chatId);
+
+                        // Send completion message (step 12)
+                        sendCompletionMessage(chatId);
+                    } catch (Exception e) {
+                        log.error("Error completing order for customer {}", chatId, e);
+                        SendMessage message = new SendMessage();
+                        message.setChatId(chatId);
+                        message.setText("Произошла ошибка при обработке вашего заказа. Пожалуйста, попробуйте еще раз.");
+                        try {
+                            execute(message);
+                        } catch (TelegramApiException ex) {
+                            log.error("Error sending error message to customer {}", chatId, ex);
+                        }
+                    }
+                } else {
+                    // No ready orders found
+                    SendMessage message = new SendMessage();
+                    message.setChatId(chatId);
+                    message.setText("У вас нет готовых заказов в данный момент.");
+                    try {
+                        execute(message);
+                    } catch (TelegramApiException ex) {
+                        log.error("Error sending no orders message to customer {}", chatId, ex);
+                    }
+                }
+                return;
+            }
+
             if (messageText.equals("/start")) {
                 // Reset user state
                 userStates.put(chatId, UserState.START);
                 clearUserSelections(chatId);
                 sendWelcomeMessage(chatId);
-            } else if (messageText.equals("Новый заказ")) {
+            } else if (messageText.equals("Новый заказ") || messageText.equals("Сделать новый заказ")) {
                 // Clear previous selections and start ordering process
                 clearUserSelections(chatId);
                 userStates.put(chatId, UserState.SELECTING_COFFEE_SHOP);
@@ -935,6 +980,36 @@ public class CustomerBot extends TelegramLongPollingBot {
             execute(message);
         } catch (TelegramApiException e) {
             log.error("Error sending unknown command message to chatId: {}", chatId, e);
+        }
+    }
+
+    /**
+     * Sends the completion message (step 12) to the customer after they've picked up their order
+     */
+    private void sendCompletionMessage(long chatId) {
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setText("Спасибо за заказ! Заглядывайте снова - мы уже скучаем 💛");
+
+        // Create keyboard with "New order" button
+        ReplyKeyboardMarkup keyboardMarkup = new ReplyKeyboardMarkup();
+        keyboardMarkup.setResizeKeyboard(true);
+        keyboardMarkup.setOneTimeKeyboard(false);
+        keyboardMarkup.setSelective(true);
+
+        List<KeyboardRow> keyboard = new ArrayList<>();
+        KeyboardRow row = new KeyboardRow();
+        row.add(new KeyboardButton("Сделать новый заказ"));
+        keyboard.add(row);
+
+        keyboardMarkup.setKeyboard(keyboard);
+        message.setReplyMarkup(keyboardMarkup);
+
+        try {
+            execute(message);
+            log.debug("Completion message sent to chatId: {}", chatId);
+        } catch (TelegramApiException e) {
+            log.error("Error sending completion message to chatId: {}", chatId, e);
         }
     }
 }
